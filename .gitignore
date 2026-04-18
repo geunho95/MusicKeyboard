@@ -1,0 +1,16 @@
+.DS_Store
+
+.clams_tmp/
+.repo_scan/
+
+/firmware/build/
+/firmware/rp2350_bringup/build/
+/firmware/rp2350_smoke/build/
+
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+*.dis
+host_preview.wav
