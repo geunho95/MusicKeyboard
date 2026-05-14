@@ -1,0 +1,29 @@
+.program audio_i2s_out
+.side_set 2
+
+; I2S output — standard I2S format, 16-bit stereo, MSB first
+;
+; side-set:  bit0 = BCLK  (GP10)
+;            bit1 = LRCLK (GP11)
+; out pin:   DIN  (GP12)
+;
+; FIFO: 32-bit words, one per stereo frame
+;   bits[31:16] = left sample (sent first, LRCLK=0)
+;   bits[15:0]  = right sample (LRCLK=1)
+;
+; Autopull threshold = 32, shift left (MSB first)
+; Total PIO cycles per frame = 64  (32 BCLK cycles × 2 PIO cycles/BCLK)
+; PIO clock = sample_rate × 64
+
+.wrap_target
+    set x, 14        side 0b01 ; BCLK high, LRCLK=0 — left channel
+left_loop:
+    out pins, 1      side 0b00 ; data bit, BCLK falling
+    jmp x-- left_loop side 0b01 ; BCLK rising (15 iterations, bits 15..1)
+    out pins, 1      side 0b10 ; bit 0, BCLK falling, LRCLK → 1
+    set x, 14        side 0b11 ; BCLK high, LRCLK=1 — right channel
+right_loop:
+    out pins, 1      side 0b10 ; data bit, BCLK falling
+    jmp x-- right_loop side 0b11 ; BCLK rising
+    out pins, 1      side 0b00 ; bit 0, BCLK falling, LRCLK → 0
+.wrap

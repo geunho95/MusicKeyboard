@@ -32,6 +32,8 @@ typedef enum {
     MK_BUTTON_EVENT_NONE = 0,
     MK_BUTTON_EVENT_PRESS,
     MK_BUTTON_EVENT_RELEASE,
+    MK_BUTTON_EVENT_ENC_CW,   /* 엔코더 시계방향 (1클릭) */
+    MK_BUTTON_EVENT_ENC_CCW,  /* 엔코더 반시계방향 (1클릭) */
 } mk_button_event_type_t;
 
 typedef struct {

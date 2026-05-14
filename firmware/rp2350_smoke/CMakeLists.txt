@@ -19,10 +19,17 @@ pico_sdk_init()
 
 add_executable(musickeyboard_rp2350_smoke
     main.c
+    ../src/platform/rp2350/st7789_rp2350.c
+)
+
+target_include_directories(musickeyboard_rp2350_smoke PRIVATE
+    ../include
 )
 
 target_link_libraries(musickeyboard_rp2350_smoke
     pico_stdlib
+    hardware_spi
+    hardware_pwm
 )
 
 pico_enable_stdio_uart(musickeyboard_rp2350_smoke 0)

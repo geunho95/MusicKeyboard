@@ -25,12 +25,17 @@ add_executable(musickeyboard_rp2350_bringup
     ../src/core/sample_bank.c
     ../src/core/sequencer.c
     ../src/core/audio_engine.c
-    ../src/platform/rp2350/audio_hal_rp2350.c
+    ../src/platform/rp2350/audio_hal_rp2350_i2s.c
     ../src/platform/rp2350/diskio_sd_spi_rp2350.c
     ../src/platform/rp2350/d200_link_rp2350.c
+    ../src/platform/rp2350/st7789_rp2350.c
     ../src/platform/rp2350/storage_hal_rp2350.c
     ${MK_FATFS_SOURCE_DIR}/ff.c
     ${MK_FATFS_SOURCE_DIR}/ffunicode.c
+)
+
+pico_generate_pio_header(musickeyboard_rp2350_bringup
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/rp2350/audio_i2s_out.pio
 )
 
 target_include_directories(musickeyboard_rp2350_bringup PRIVATE
@@ -40,9 +45,11 @@ target_include_directories(musickeyboard_rp2350_bringup PRIVATE
 
 target_link_libraries(musickeyboard_rp2350_bringup
     pico_stdlib
+    hardware_pio
+    hardware_dma
     hardware_pwm
     hardware_spi
-    hardware_timer
+    hardware_clocks
     hardware_sync
 )
 

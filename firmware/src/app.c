@@ -228,11 +228,14 @@ static void mk_app_toggle_live_record(mk_app_t *app) {
     if (app->record_state == MK_RECORD_ACTIVE) {
         app->record_state = MK_RECORD_IDLE;
         app->view = MK_VIEW_PERFORMANCE;
-        puts("[app] live record off");
+        mk_transport_stop(&app->transport);
+        puts("[app] live record off + transport stopped");
     } else {
         app->record_state = MK_RECORD_ACTIVE;
         app->view = MK_VIEW_LIVE_RECORD;
-        puts("[app] live record on");
+        app->transport.current_step = 0u;
+        app->transport.running = true;
+        puts("[app] live record on + transport started");
     }
     app->dirty = true;
 }
@@ -309,114 +312,124 @@ static void mk_app_adjust_selected_sound_parameter(mk_app_t *app, int delta) {
     app->dirty = true;
 }
 
-static void mk_app_adjust_current_pad(mk_app_t *app, int delta) {
+/* ─── 옥타브 오프셋 (-2 ~ +2) ─────────────────────────────── */
+static int8_t g_octave = 0;
+
+/*
+ * 피아노 키 → 오디오 트리거
+ *  semitone: 0=C … 11=B
+ *  rate = 2^((semitone + octave*12 + coarse_tune) / 12)
+ */
+static void mk_app_trigger_piano_key(mk_app_t *app, uint8_t semitone) {
     mk_sound_channel_t *sound = &app->sequencer.sounds[app->selected_sound];
-    uint8_t pad = mk_app_clamp_u8((int)sound->last_pad_index + delta, 0u, 15u);
-    mk_app_preview_pad(app, pad);
+    uint8_t slot;
+
+    if (mk_app_sound_is_drum(app->selected_sound)) {
+        /* 드럼 사운드: semitone 을 드럼 슬라이스 오프셋으로 사용 */
+        slot = mk_app_resolve_drum_slot(app, app->selected_sound, semitone % MK_DRUM_SLICES_PER_KIT);
+    } else {
+        slot = mk_app_resolve_melodic_slot(app, app->selected_sound);
+    }
+
+    if (slot >= MK_SAMPLE_SLOT_COUNT || !app->sample_bank.slots[slot].occupied) {
+        return;
+    }
+
+    int8_t total_semitones = (int8_t)(semitone + g_octave * 12 + sound->coarse_tune_semitones);
+    float  rate = mk_pow_semitones(total_semitones);
+    uint8_t gain = mk_app_apply_master_gain(app, sound->level_0_127);
+
+    mk_audio_engine_trigger_slot(&app->audio, &app->sample_bank, slot, rate, gain);
+
+    /* LIVE_RECORD + 트랜스포트 실행 중: 현재 스텝에 기록 */
+    if (app->view == MK_VIEW_LIVE_RECORD && app->transport.running) {
+        mk_step_event_t rec_event = {
+            .enabled     = true,
+            .sample_slot = slot,
+            .pad_index   = semitone,
+            .gain_0_127  = sound->level_0_127,
+            .rate        = rate,
+        };
+        mk_sequencer_toggle_step(
+            &app->sequencer,
+            app->selected_sound,
+            mk_app_active_pattern(app),
+            (uint8_t)app->transport.current_step,
+            &rec_event
+        );
+    }
+
+    sound->last_pad_index = semitone;
+    app->dirty = true;
 }
 
-static void mk_app_handle_param_button(mk_app_t *app, int delta) {
+/* ─── ENC1: 뷰별 선택 / BPM ──────────────────────────────── */
+static void mk_app_enc1_turn(mk_app_t *app, int delta) {
     switch (app->view) {
         case MK_VIEW_BPM:
             mk_app_adjust_bpm(app, delta);
             break;
-        case MK_VIEW_FX:
-            mk_app_adjust_selected_sound_parameter(app, delta);
-            break;
         case MK_VIEW_SOUND_SELECT: {
-            uint8_t sound = mk_app_clamp_u8((int)app->selected_sound + delta, 0u, MK_SOUND_CHANNEL_COUNT - 1u);
-            app->selected_sound = sound;
-            mk_app_preview_pad(app, app->sequencer.sounds[sound].last_pad_index);
+            int s = (int)app->selected_sound + delta;
+            if (s < 0) s = 0;
+            if (s >= MK_SOUND_CHANNEL_COUNT) s = MK_SOUND_CHANNEL_COUNT - 1;
+            app->selected_sound = (uint8_t)s;
+            printf("[app] sound=%u\n", app->selected_sound);
+            app->dirty = true;
+            break;
+        }
+        case MK_VIEW_PATTERN_SELECT: {
+            int p = (int)app->current_pattern + delta;
+            if (p < 0) p = 0;
+            if (p >= MK_PATTERN_SLOT_COUNT) p = MK_PATTERN_SLOT_COUNT - 1;
+            app->current_pattern = (uint8_t)p;
+            printf("[app] pattern=%u\n", app->current_pattern);
+            app->dirty = true;
             break;
         }
         default:
-            mk_app_adjust_current_pad(app, delta);
+            /* EDIT 뷰: 마스터 볼륨 조정 */
+            app->master_level_0_127 = mk_app_clamp_u8(
+                (int)app->master_level_0_127 + delta * 4, 0u, 127u);
+            printf("[app] master_vol=%u\n", app->master_level_0_127);
+            app->dirty = true;
             break;
     }
 }
 
-static void mk_app_handle_pad_press(mk_app_t *app, uint8_t pad_index) {
+/* ─── ENC2: 피치 / FX 파라미터 ───────────────────────────── */
+static void mk_app_enc2_turn(mk_app_t *app, int delta) {
+    if (app->view == MK_VIEW_FX) {
+        mk_app_adjust_selected_sound_parameter(app, delta);
+    } else {
+        /* 선택된 사운드의 코스 튜닝 */
+        mk_sound_channel_t *snd = &app->sequencer.sounds[app->selected_sound];
+        snd->coarse_tune_semitones = (int8_t)mk_app_clamp_u8(
+            (int)snd->coarse_tune_semitones + delta + 24, 0u, 48u) - 24;
+        printf("[app] sound=%u tune=%d\n", app->selected_sound, snd->coarse_tune_semitones);
+        app->dirty = true;
+    }
+}
+
+/* ─── ENC3: 옥타브 ───────────────────────────────────────── */
+static void mk_app_enc3_turn(mk_app_t *app, int delta) {
+    g_octave = (int8_t)(g_octave + delta);
+    if (g_octave > 2)  g_octave = 2;
+    if (g_octave < -2) g_octave = -2;
+    printf("[app] octave=%d\n", g_octave);
+    app->dirty = true;
+}
+
+/* ─── 뷰 모드 순환: PERF→SOUND→PATTERN→EDIT→PERF ─────────── */
+static void mk_app_cycle_mode(mk_app_t *app) {
     switch (app->view) {
-        case MK_VIEW_PERFORMANCE:
-            mk_app_preview_pad(app, pad_index);
-            break;
-        case MK_VIEW_EDIT:
-            mk_app_toggle_step_snapshot(app, pad_index);
-            break;
-        case MK_VIEW_LIVE_RECORD:
-            mk_app_preview_pad(app, pad_index);
-            if (app->transport.running) {
-                mk_app_toggle_step_snapshot(app, (uint8_t)app->transport.current_step);
-            }
-            break;
-        case MK_VIEW_SOUND_SELECT:
-            app->selected_sound = pad_index;
-            printf("[app] selected sound=%u\n", app->selected_sound);
-            mk_app_preview_pad(app, app->sequencer.sounds[app->selected_sound].last_pad_index);
-            break;
-        case MK_VIEW_PATTERN_SELECT:
-            mk_app_append_pattern_to_chain(app, pad_index);
-            printf("[app] pattern chain length=%u current=%u\n", app->pattern_chain_length, app->current_pattern);
-            break;
-        case MK_VIEW_BPM:
-            app->master_level_0_127 = (uint8_t)((uint32_t)pad_index * 127u / 15u);
-            printf("[app] master level=%u\n", app->master_level_0_127);
-            app->dirty = true;
-            break;
-        case MK_VIEW_FX:
-            mk_app_adjust_selected_sound_parameter(app, (int)pad_index - 7);
-            break;
+        case MK_VIEW_PERFORMANCE:    app->view = MK_VIEW_SOUND_SELECT;   break;
+        case MK_VIEW_SOUND_SELECT:   app->view = MK_VIEW_PATTERN_SELECT; break;
+        case MK_VIEW_PATTERN_SELECT: app->view = MK_VIEW_EDIT;           break;
+        default:                     app->view = MK_VIEW_PERFORMANCE;    break;
     }
-}
-
-static void mk_app_handle_function_press(mk_app_t *app, uint8_t button_id) {
-    switch (button_id) {
-        case MK_BUTTON_SOUND:
-            mk_app_set_view_toggle(app, MK_VIEW_SOUND_SELECT);
-            break;
-        case MK_BUTTON_PATTERN:
-            if (app->view != MK_VIEW_PATTERN_SELECT) {
-                app->pattern_chain_length = 0u;
-                app->pattern_chain_index = 0u;
-                app->view = MK_VIEW_PATTERN_SELECT;
-            } else {
-                app->view = MK_VIEW_PERFORMANCE;
-                if (app->pattern_chain_length > 0u) {
-                    app->pattern_chain_index = 0u;
-                    app->current_pattern = app->pattern_chain[0];
-                }
-            }
-            app->dirty = true;
-            break;
-        case MK_BUTTON_BPM:
-            mk_app_set_view_toggle(app, MK_VIEW_BPM);
-            break;
-        case MK_BUTTON_PARAM_A:
-            mk_app_handle_param_button(app, -1);
-            break;
-        case MK_BUTTON_PARAM_B:
-            mk_app_handle_param_button(app, 1);
-            break;
-        case MK_BUTTON_RECORD:
-            mk_app_toggle_live_record(app);
-            break;
-        case MK_BUTTON_FX:
-            mk_app_cycle_fx_page(app);
-            break;
-        case MK_BUTTON_PLAY:
-            mk_app_toggle_play(app);
-            break;
-        case MK_BUTTON_WRITE:
-            if (app->view == MK_VIEW_EDIT) {
-                app->view = MK_VIEW_PERFORMANCE;
-            } else {
-                app->view = MK_VIEW_EDIT;
-            }
-            app->dirty = true;
-            break;
-        default:
-            break;
-    }
+    printf("[app] mode=%u\n", (unsigned)app->view);
+    app->dirty = true;
 }
 
 static void mk_app_trigger_current_step(mk_app_t *app) {
@@ -477,19 +490,65 @@ void mk_app_init(mk_app_t *app) {
 }
 
 void mk_app_handle_button_event(mk_app_t *app, mk_button_event_t event) {
-    int8_t pad_index;
+    /* ── 엔코더 회전: PRESS 여부 무관하게 처리 ── */
+    if (event.type == MK_BUTTON_EVENT_ENC_CW ||
+        event.type == MK_BUTTON_EVENT_ENC_CCW) {
+        int delta = (event.type == MK_BUTTON_EVENT_ENC_CW) ? 1 : -1;
+        switch (event.id) {
+            case MK_ENC1: mk_app_enc1_turn(app, delta); break;
+            case MK_ENC2: mk_app_enc2_turn(app, delta); break;
+            case MK_ENC3: mk_app_enc3_turn(app, delta); break;
+            default: break;
+        }
+        return;
+    }
 
+    /* ── 이하 PRESS 이벤트만 처리 ── */
     if (event.type != MK_BUTTON_EVENT_PRESS) {
         return;
     }
 
-    pad_index = mk_button_id_to_pad_index(event.id);
-    if (pad_index >= 0) {
-        mk_app_handle_pad_press(app, (uint8_t)pad_index);
+    /* 피아노 건반 */
+    if (mk_button_is_key(event.id)) {
+        mk_app_trigger_piano_key(app, event.id);  /* id == semitone (0-11) */
         return;
     }
 
-    mk_app_handle_function_press(app, event.id);
+    /* 기능 버튼 */
+    switch (event.id) {
+        case MK_BTN_PLAY:
+            mk_app_toggle_play(app);
+            break;
+
+        case MK_BTN_REC:
+            mk_app_toggle_live_record(app);
+            break;
+
+        case MK_BTN_MODE:
+            mk_app_cycle_mode(app);
+            break;
+
+        /* 엔코더 푸시 */
+        case MK_ENC1_SW:
+            /* 탭 템포 — 현재는 BPM 뷰 토글 */
+            mk_app_set_view_toggle(app, MK_VIEW_BPM);
+            break;
+
+        case MK_ENC2_SW:
+            /* FX 뷰 토글 */
+            mk_app_cycle_fx_page(app);
+            break;
+
+        case MK_ENC3_SW:
+            /* 옥타브 리셋 */
+            g_octave = 0;
+            printf("[app] octave reset\n");
+            app->dirty = true;
+            break;
+
+        default:
+            break;
+    }
 }
 
 void mk_app_tick(mk_app_t *app) {
