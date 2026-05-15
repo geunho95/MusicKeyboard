@@ -51,3 +51,55 @@ cmake -S firmware -B firmware/build
 cmake --build firmware/build
 ./firmware/build/musickeyboard_sampler
 ```
+
+---
+
+## RP2350 빌드 & 플래시
+
+> **BOOTSEL 버튼을 누를 필요 없습니다.** `picotool -f` 옵션으로 USB CDC를 통해 바로 플래시할 수 있습니다.
+
+### 사전 준비
+
+```bash
+# pico-sdk 경로 설정 (한 번만)
+export PICO_SDK_PATH=/path/to/pico-sdk
+```
+
+### rp2350_smoke (LCD + 매트릭스 UI 테스트)
+
+```bash
+cd firmware/rp2350_smoke/build
+cmake .. -DPICO_BOARD=pico2
+make -j4
+
+# 플래시 (Pico가 USB로 연결된 상태에서)
+picotool load -f musickeyboard_rp2350_smoke.uf2
+picotool reboot
+```
+
+### rp2350_bringup (풀 앱: LCD + 버튼 + 오디오)
+
+```bash
+cd firmware/rp2350_bringup/build
+cmake .. -DPICO_BOARD=pico2
+make -j4
+
+picotool load -f musickeyboard_rp2350_bringup.uf2
+picotool reboot
+```
+
+### `picotool` 설치
+
+```bash
+# macOS (Homebrew)
+brew install picotool
+
+# 또는 소스 빌드: https://github.com/raspberrypi/picotool
+```
+
+---
+
+## 브링업 현황 & 할 일
+
+- [docs/bringup_status.md](docs/bringup_status.md) — 하드웨어 구성, 핀맵, 오디오 스택 상세
+- [docs/todo.md](docs/todo.md) — 앞으로 해야 할 일 목록
