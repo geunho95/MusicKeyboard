@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>4×4 매트릭스 배선도</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #12121f;
+  font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 24px 16px;
+}
+h2 { color: #e0e0ff; font-size: 20px; margin-bottom: 6px; }
+.sub { color: #666; font-size: 12px; margin-bottom: 20px; text-align: center; line-height: 1.6; }
+canvas { max-width: 100%; border-radius: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+</style>
+</head>
+<body>
+<h2>4×4 키 매트릭스 배선도</h2>
+<p class="sub">
+  ROW (GP20·22·23·24) = OUTPUT, 스캔 시 LOW 구동<br>
+  COL (GP26·27·28·29) = INPUT, 내부 풀업 &nbsp;|&nbsp; 다이오드 K(빨간띠) → COL 방향
+</p>
+<canvas id="c"></canvas>
+<script>
+const cv = document.getElementById('c');
+const dpr = window.devicePixelRatio || 1;
+const W = 900, H = 560;
+cv.width  = W * dpr;
+cv.height = H * dpr;
+cv.style.width  = W + 'px';
+cv.style.height = H + 'px';
+const g = cv.getContext('2d');
+g.scale(dpr, dpr);
+
+// ── 색상 팔레트
+const BG    = '#12121f';
+const ROWC  = '#7ec8e3';
+const COLC  = '#4caf50';
+const DIOC  = '#f5a623';
+const BANDC = '#ff5555';
+const KEYC  = '#ffffff';
+const FNC   = '#aaaaaa';
+const DIMC  = '#3a3a4a';
+
+// ── 그리드 좌표
+const COL_X   = [195, 380, 565, 750];  // COL 버스 x
+const ROW_Y   = [120, 220, 320, 420];  // ROW 버스 y
+const ROW_START_X = 68;
+
+const NOTES = [
+  ['도','도#','레','레#'],
+  ['미','파','파#','솔'],
+  ['솔#','라','라#','시'],
+  ['FN1','FN2','FN3','—'],
+];
+const NOTE_COLORS = [
+  [KEYC,KEYC,KEYC,KEYC],
+  [KEYC,KEYC,KEYC,KEYC],
+  [KEYC,KEYC,KEYC,KEYC],
+  [FNC, FNC, FNC, DIMC],
+];
+
+// ── 헬퍼
+function line(x1,y1,x2,y2,color,lw,dash){
+  g.save();
+  g.strokeStyle=color; g.lineWidth=lw||2;
+  if(dash) g.setLineDash(dash); else g.setLineDash([]);
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  g.restore();
+}
+function circle(x,y,r,fill,stroke,lw){
+  g.beginPath(); g.arc(x,y,r,0,Math.PI*2);
+  if(fill){g.fillStyle=fill; g.fill();}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=lw||2; g.stroke();}
+}
+function text(x,y,s,color,size,align,bold){
+  g.save();
+  g.fillStyle=color;
+  g.font=`${bold?'bold ':''} ${size||13}px -apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif`;
+  g.textAlign=align||'left';
+  g.textBaseline='middle';
+  g.fillText(s,x,y);
+  g.restore();
+}
+
+// ── 스위치 그리기 (x,y=중심좌표 왼쪽, 너비 반환)
+function drawSwitch(x, y, color) {
+  const W=40, LEG=10;
+  line(x, y, x+LEG, y, color, 2);
+  circle(x+LEG, y, 3, color);
+  line(x+LEG, y, x+LEG+5, y-10, color, 2);
+  circle(x+W-LEG, y, 3, color);
+  line(x+W-LEG, y, x+W, y, color, 2);
+  return x+W;
+}
+
+// ── 다이오드 그리기 (x,y=왼쪽중심, 너비=36)
+function drawDiode(x, y) {
+  const TRI=14;
+  // 왼쪽 선 (Anode)
+  line(x, y, x+8, y, DIOC, 2);
+  // 삼각형
+  g.save();
+  g.beginPath();
+  g.moveTo(x+8, y-7); g.lineTo(x+8, y+7); g.lineTo(x+8+TRI, y);
+  g.closePath();
+  g.fillStyle=DIOC; g.fill();
+  g.strokeStyle=DIOC; g.lineWidth=1; g.stroke();
+  g.restore();
+  // Kathode 바
+  line(x+8+TRI, y-8, x+8+TRI, y+8, DIOC, 2.5);
+  // 빨간 띠 (K 표시)
+  line(x+8+TRI, y-10, x+8+TRI, y+10, BANDC, 3);
+  // 오른쪽 선 (→ COL)
+  line(x+8+TRI, y, x+36, y, DIOC, 2);
+}
+
+// ═══════════════════════ 배경
+g.fillStyle = BG;
+g.beginPath();
+g.roundRect(0,0,W,H,12);
+g.fill();
+
+// ═══════════════════════ COL 버스 세로선
+COL_X.forEach((cx, i) => {
+  line(cx, 62, cx, 460, COLC, 1.5, [7,4]);
+  // 헤더
+  text(cx,  32, `COL${i}`, COLC, 14, 'center', true);
+  text(cx,  50, `GP${26+i}`, COLC, 11, 'center');
+  // 하단 Pico 단자
+  circle(cx, 460, 8, COLC);
+  text(cx, 478, 'Pico2', COLC, 11, 'center');
+});
+
+// ═══════════════════════ ROW 레이블 + 가이드선 + 시작 단자
+const ROW_GPIO = ['GP20','GP22','GP23','GP24'];
+ROW_Y.forEach((ry, i) => {
+  text(8, ry-7, `ROW${i}`, ROWC, 13, 'left', true);
+  text(8, ry+8, ROW_GPIO[i], ROWC, 10, 'left');
+  // 희미한 가이드선
+  line(ROW_START_X, ry, 790, ry, ROWC, 1, []);
+  g.globalAlpha = 0.15;
+  line(ROW_START_X, ry, 790, ry, ROWC, 1);
+  g.globalAlpha = 1;
+  // 시작 단자 (Pico ROW GPIO)
+  circle(ROW_START_X, ry, 7, ROWC);
+});
+
+// ═══════════════════════ 각 키 셀
+// SW: 40px, 간격 4px, DIO: 36px  → 합계 80px
+// DIO 오른쪽 끝 = COL_X → DIO 시작 = COL_X-36 → SW 시작 = COL_X-36-4-40 = COL_X-80
+ROW_Y.forEach((ry, ri) => {
+  COL_X.forEach((cx, ci) => {
+    const isDim = ri===3 && ci===3;
+    const nc    = isDim ? DIMC : NOTE_COLORS[ri][ci];
+    const swX   = cx - 80;
+    const dioX  = cx - 36;
+
+    // ROW 수평선 (ROW_START → 스위치 왼쪽)
+    line(ROW_START_X, ry, swX, ry, isDim ? DIMC : ROWC, 2);
+
+    // 스위치
+    const swEnd = drawSwitch(swX, ry, isDim ? DIMC : ROWC);
+
+    // 스위치→다이오드 연결선
+    line(swEnd, ry, dioX, ry, isDim ? DIMC : DIOC, 2);
+
+    // 다이오드
+    if (!isDim) {
+      drawDiode(dioX, ry);
+    } else {
+      line(dioX, ry, cx, ry, DIMC, 2);
+    }
+
+    // COL 접합 노드
+    circle(cx, ry, 5, isDim ? '#2a2a3a' : DIOC);
+
+    // 음계 레이블 (스위치 위)
+    text(swX + 2, ry - 14, NOTES[ri][ci], nc, 13, 'left', ri!==3);
+  });
+});
+
+// ═══════════════════════ 범례
+const LY = 510;
+g.fillStyle = '#0a0a18';
+g.beginPath(); g.roundRect(12, LY-14, W-24, 28, 6); g.fill();
+
+// 스위치 샘플
+drawSwitch(22, LY, ROWC);
+text(70, LY, '스위치', ROWC, 11, 'left');
+
+// 다이오드 샘플
+drawDiode(155, LY);
+text(197, LY, '다이오드  K(빨간띠)→COL', DIOC, 11, 'left');
+
+// COL 접합
+circle(460, LY, 5, DIOC);
+text(470, LY, 'COL 접합점', DIOC, 11, 'left');
+
+// ROW 시작
+circle(580, LY, 7, ROWC);
+text(593, LY, 'ROW Pico2 GPIO', ROWC, 11, 'left');
+
+// COL 버스
+line(770, LY, 800, LY, COLC, 2, [5,3]);
+text(806, LY, 'COL 버스', COLC, 11, 'left');
+</script>
+</body>
+</html>
