@@ -20,6 +20,7 @@ typedef enum {
     MK_VIEW_PATTERN_SELECT,
     MK_VIEW_BPM,
     MK_VIEW_FX,
+    MK_VIEW_SAMPLE_SELECT,
 } mk_ui_view_t;
 
 typedef enum {
@@ -113,4 +114,8 @@ typedef struct {
     uint8_t pattern_chain_index;
     uint8_t master_level_0_127;
     bool dirty;
+    /* 샘플 선택 뷰 */
+    char sample_names[64][32];
+    uint8_t sample_count;
+    uint8_t sample_cursor;
 } mk_app_t;

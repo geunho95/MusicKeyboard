@@ -60,7 +60,7 @@ mk_app_init(&app);          // SD 포함 나머지 초기화
 
 ## 2. 버튼 스캔 ✅ 동작 확인
 
-**대상 코드**: `firmware/src/platform/rp2350/d200_link_rp2350.c`
+**대상 코드**: `firmware/rp2350_smoke/main.c`
 
 ### 4×4 매트릭스 배선
 
@@ -85,14 +85,6 @@ ROW3(GP16) [ FN1 ]   [ FN2 ]    [ FN3 ]    [ -- ]   id:12~14 (15=미사용)
 
 - **Gray code 4-상태 머신**, 누적 ±4 에서 1클릭 확정
 - **이벤트 타입**: `MK_BUTTON_EVENT_PRESS`, `MK_BUTTON_EVENT_RELEASE`, `MK_BUTTON_EVENT_ENC_CW`, `MK_BUTTON_EVENT_ENC_CCW`
-
-### 폴링 API
-
-```c
-// d200_link_rp2350.c 에서 매 루프마다 호출
-bool mk_d200_link_poll_button_event(mk_button_event_t *event);
-// → 내부에서 scan_matrix() + scan_enc_sw() + scan_encoders() 호출 후 FIFO에서 꺼냄
-```
 
 ### 버튼 ID → 기능 매핑 (`include/music_keyboard/button_map.h`)
 

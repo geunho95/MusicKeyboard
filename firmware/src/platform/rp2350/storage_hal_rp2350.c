@@ -106,6 +106,7 @@ static bool mk_find_wav_path(char *path_buffer, size_t path_buffer_size) {
         "0:/sample.wav",
         "0:/samples/source.wav",
         "0:/samples/recording.wav",
+        "0:/samples/sound-1.wav",
     };
     FILINFO info;
     DIR directory;
@@ -376,5 +377,48 @@ bool mk_storage_hal_load_project(mk_app_t *app) {
 bool mk_storage_hal_save_project(const mk_app_t *app) {
     (void)app;
     puts("[rp2350/storage] save stub");
+    return true;
+}
+
+uint8_t mk_storage_hal_list_samples(char names[][32], uint8_t max_count) {
+    if (!g_storage_mounted) return 0;
+    DIR dir;
+    FILINFO info;
+    uint8_t count = 0;
+    if (f_opendir(&dir, "0:/samples") != FR_OK) return 0;
+    while (count < max_count) {
+        if (f_readdir(&dir, &info) != FR_OK || info.fname[0] == '\0') break;
+        if ((info.fattrib & (AM_DIR | AM_HID | AM_SYS)) != 0u) continue;
+        if (!mk_has_wav_extension(info.fname)) continue;
+        strncpy(names[count], info.fname, 31);
+        names[count][31] = '\0';
+        count++;
+    }
+    f_closedir(&dir);
+    return count;
+}
+
+bool mk_storage_hal_load_sample_by_name(mk_app_t *app, const char *filename) {
+    char path[64];
+    snprintf(path, sizeof(path), "0:/samples/%s", filename);
+    mk_rp2350_sample_t sample = {
+        .frames = g_fallback_sample,
+        .frame_count = MK_RP2350_FALLBACK_SAMPLE_FRAMES,
+        .sample_rate_hz = MK_DEFAULT_AUDIO_SAMPLE_RATE,
+        .from_sd = false,
+    };
+    if (!mk_load_wav_from_fatfs(path, &sample)) {
+        printf("[rp2350/storage] failed to load %s\n", path);
+        return false;
+    }
+    printf("[rp2350/storage] loaded %s frames=%lu\n", path, (unsigned long)sample.frame_count);
+    for (uint8_t slot = 0; slot < MK_SAMPLE_SLOT_COUNT; ++slot) {
+        app->sample_bank.slots[slot].occupied = true;
+        app->sample_bank.slots[slot].pcm_frames = sample.frames;
+        app->sample_bank.slots[slot].owns_pcm_frames = false;
+        app->sample_bank.slots[slot].frame_count = sample.frame_count;
+        app->sample_bank.slots[slot].sample_rate_hz = sample.sample_rate_hz;
+        app->sample_bank.slots[slot].root_note = (slot < MK_LOADED_MELODIC_SAMPLE_COUNT) ? 61 : 36;
+    }
     return true;
 }

@@ -71,25 +71,64 @@ static void lcd_test_pattern(void) {
     sleep_ms(2000);
 }
 
+/* ── 샘플 선택 뷰 ────────────────────────────────────────── */
+static void lcd_draw_sample_select(mk_app_t *app) {
+    mk_lcd_clear(MK_LCD_BLACK);
+    mk_lcd_fill_rect(0, 0, MK_LCD_W, 14, MK_LCD_DKGRAY);
+    mk_lcd_draw_str2(4, 3, "SMPL", MK_LCD_CYAN, MK_LCD_DKGRAY);
+
+    if (app->sample_count == 0) {
+        mk_lcd_draw_str(4, 30, "NO FILES IN /samples/", MK_LCD_GRAY, MK_LCD_BLACK);
+        return;
+    }
+
+    /* 3줄 표시: 이전/현재/다음 */
+    char buf[40];
+    int8_t cur = (int8_t)app->sample_cursor;
+    for (int8_t row = -1; row <= 1; row++) {
+        int8_t idx = cur + row;
+        if (idx < 0 || idx >= app->sample_count) continue;
+        int y = 22 + row * 18;
+        uint16_t fg = (row == 0) ? MK_LCD_WHITE : MK_LCD_GRAY;
+        uint16_t bg = (row == 0) ? MK_LCD_BLUE  : MK_LCD_BLACK;
+        if (row == 0) mk_lcd_fill_rect(0, y - 2, MK_LCD_W, 16, MK_LCD_BLUE);
+        snprintf(buf, sizeof(buf), "%02u %s", (unsigned)idx + 1, app->sample_names[idx]);
+        mk_lcd_draw_str(4, y, buf, fg, bg);
+    }
+
+    /* 인덱스 표시 */
+    snprintf(buf, sizeof(buf), "%02u/%02u", (unsigned)app->sample_cursor + 1,
+             (unsigned)app->sample_count);
+    mk_lcd_draw_str(230, 4, buf, MK_LCD_WHITE, MK_LCD_DKGRAY);
+}
+
 /* ── 런타임 LCD 업데이트 ──────────────────────────────────── */
-static void lcd_update(const mk_app_t *app) {
+static void lcd_update(mk_app_t *app) {
     static uint16_t last_step    = 0xFFFFu;
     static bool     last_running = false;
     static uint8_t  last_view    = 0xFFu;
+    static uint8_t  last_cursor  = 0xFFu;
 
     bool changed = (app->transport.current_step != last_step ||
                     app->transport.running       != last_running ||
-                    (uint8_t)app->view          != last_view);
+                    (uint8_t)app->view          != last_view ||
+                    app->sample_cursor          != last_cursor);
     if (!changed) return;
 
     last_step    = app->transport.current_step;
     last_running = app->transport.running;
     last_view    = (uint8_t)app->view;
+    last_cursor  = app->sample_cursor;
+
+    if (app->view == MK_VIEW_SAMPLE_SELECT) {
+        lcd_draw_sample_select(app);
+        return;
+    }
 
     /* ── 상태바: 모드명 ── */
-    const char *view_names[] = {"PERF", "EDIT", "REC ", "SND ", "PAT ", "BPM ", "FX  "};
+    const char *view_names[] = {"PERF", "EDIT", "REC ", "SND ", "PAT ", "BPM ", "FX  ", "SMPL"};
     uint8_t vi = (uint8_t)app->view;
-    if (vi >= 7) vi = 0;
+    if (vi >= 8) vi = 0;
     uint16_t bar_clr = (app->record_state == MK_RECORD_ACTIVE) ? MK_LCD_RED : MK_LCD_DKGRAY;
     mk_lcd_fill_rect(0, 0, MK_LCD_W, 14, bar_clr);
     mk_lcd_draw_str2(4, 3, view_names[vi], MK_LCD_WHITE, bar_clr);
@@ -149,8 +188,18 @@ int main(void) {
     /* 첫 LCD 상태 */
     lcd_update(&app);
 
+    /* GP17/GP18 직접 읽기 테스트 */
+    static uint32_t dbg_tick = 0;
+    gpio_init(17); gpio_set_dir(17, GPIO_IN); gpio_pull_up(17);
+    gpio_init(18); gpio_set_dir(18, GPIO_IN); gpio_pull_up(18);
+
     while (true) {
         absolute_time_t now = get_absolute_time();
+
+        if (++dbg_tick >= 50000) {
+            dbg_tick = 0;
+            printf("[dbg] GP17=%u GP18=%u\n", gpio_get(17), gpio_get(18));
+        }
 
         mk_app_tick(&app);
         step_interval_us = mk_step_interval_us(&app);

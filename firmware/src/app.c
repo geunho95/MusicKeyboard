@@ -363,46 +363,29 @@ static void mk_app_trigger_piano_key(mk_app_t *app, uint8_t semitone) {
     app->dirty = true;
 }
 
-/* ─── ENC1: 뷰별 선택 / BPM ──────────────────────────────── */
+/* ─── ENC1: 마스터 볼륨 ───────────────────────────────────── */
 static void mk_app_enc1_turn(mk_app_t *app, int delta) {
-    switch (app->view) {
-        case MK_VIEW_BPM:
-            mk_app_adjust_bpm(app, delta);
-            break;
-        case MK_VIEW_SOUND_SELECT: {
-            int s = (int)app->selected_sound + delta;
-            if (s < 0) s = 0;
-            if (s >= MK_SOUND_CHANNEL_COUNT) s = MK_SOUND_CHANNEL_COUNT - 1;
-            app->selected_sound = (uint8_t)s;
-            printf("[app] sound=%u\n", app->selected_sound);
-            app->dirty = true;
-            break;
-        }
-        case MK_VIEW_PATTERN_SELECT: {
-            int p = (int)app->current_pattern + delta;
-            if (p < 0) p = 0;
-            if (p >= MK_PATTERN_SLOT_COUNT) p = MK_PATTERN_SLOT_COUNT - 1;
-            app->current_pattern = (uint8_t)p;
-            printf("[app] pattern=%u\n", app->current_pattern);
-            app->dirty = true;
-            break;
-        }
-        default:
-            /* EDIT 뷰: 마스터 볼륨 조정 */
-            app->master_level_0_127 = mk_app_clamp_u8(
-                (int)app->master_level_0_127 + delta * 4, 0u, 127u);
-            printf("[app] master_vol=%u\n", app->master_level_0_127);
-            app->dirty = true;
-            break;
-    }
+    app->master_level_0_127 = mk_app_clamp_u8(
+        (int)app->master_level_0_127 + delta * 4, 0u, 127u);
+    printf("[app] master_vol=%u\n", app->master_level_0_127);
+    app->dirty = true;
 }
 
-/* ─── ENC2: 피치 / FX 파라미터 ───────────────────────────── */
+/* ─── ENC2: 피치 / 샘플 선택 ─────────────────────────────── */
 static void mk_app_enc2_turn(mk_app_t *app, int delta) {
-    if (app->view == MK_VIEW_FX) {
+    if (app->view == MK_VIEW_SAMPLE_SELECT) {
+        if (app->sample_count == 0) return;
+        int next = (int)app->sample_cursor + delta;
+        if (next < 0) next = 0;
+        if (next >= app->sample_count) next = app->sample_count - 1;
+        app->sample_cursor = (uint8_t)next;
+        printf("[app] sample_cursor=%u %s\n", app->sample_cursor,
+               app->sample_names[app->sample_cursor]);
+        mk_storage_hal_load_sample_by_name(app, app->sample_names[app->sample_cursor]);
+        app->dirty = true;
+    } else if (app->view == MK_VIEW_FX) {
         mk_app_adjust_selected_sound_parameter(app, delta);
     } else {
-        /* 선택된 사운드의 코스 튜닝 */
         mk_sound_channel_t *snd = &app->sequencer.sounds[app->selected_sound];
         snd->coarse_tune_semitones = (int8_t)mk_app_clamp_u8(
             (int)snd->coarse_tune_semitones + delta + 24, 0u, 48u) - 24;
@@ -535,8 +518,21 @@ void mk_app_handle_button_event(mk_app_t *app, mk_button_event_t event) {
             break;
 
         case MK_ENC2_SW:
-            /* FX 뷰 토글 */
-            mk_app_cycle_fx_page(app);
+            if (app->view == MK_VIEW_SAMPLE_SELECT) {
+                /* 선택 확정 → 로드 후 PERF 복귀 */
+                if (app->sample_count > 0) {
+                    mk_storage_hal_load_sample_by_name(app, app->sample_names[app->sample_cursor]);
+                }
+                app->view = MK_VIEW_PERFORMANCE;
+                app->dirty = true;
+            } else {
+                /* 샘플 선택 뷰 진입: 파일 목록 열거 */
+                app->sample_count = mk_storage_hal_list_samples(app->sample_names, 64);
+                app->sample_cursor = 0;
+                app->view = MK_VIEW_SAMPLE_SELECT;
+                printf("[app] sample_select: %u files\n", app->sample_count);
+                app->dirty = true;
+            }
             break;
 
         case MK_ENC3_SW:
